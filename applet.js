@@ -1,10 +1,14 @@
 const Applet = imports.ui.applet;
 const PopupMenu = imports.ui.popupMenu;
+const Settings = imports.ui.settings;
+const Tweener = imports.ui.tweener;
 
 const Clutter = imports.gi.Clutter;
 const Pango = imports.gi.Pango;
 const PangoCairo = imports.gi.PangoCairo;
 const St = imports.gi.St;
+
+const TweenEquations = imports.tweener.equations;
 
 function bind(func, context){
     function callback(){
@@ -30,10 +34,7 @@ Canvas.prototype = {
     y: 0,
 
     scale: 10,
-    textScale: .08,
-
-    step: [10, 5, 1],
-    size: [.75, .5, .2],
+    textScale: .8,
 
     _init: function(applet){
         PopupMenu.PopupBaseMenuItem.prototype._init.call(this, {activate: false, sensitive: false});
@@ -42,7 +43,22 @@ Canvas.prototype = {
         this.canvas.connect("repaint", bind(this.draw, this));
         this.addActor(this.canvas, {expand: true, span: -1});
 
+        this.actor.connect("scroll-event", bind(this.onScroll, this));
+        this.actor.connect("key-press-event", bind(this.onKeyPress, this));
+
         this.applet = applet;
+        this.settings = applet.settings;
+
+        this.step = [1, 5, 10];
+        this.size = [2, 4, 8];
+
+        this.animation = {
+            duration: 5000,
+            scale: [this.scale, 0]
+        };
+
+        this.animation.timeline = new Clutter.Timeline({duration: this.animation.duration});
+        this.animation.timeline.connect("new-frame", bind(this.animationFrame, this));
     },
 
     repaint: function(){
@@ -57,24 +73,18 @@ Canvas.prototype = {
         this.ctx.setSourceRGBA(.8, .8, .8, .5);
         this.ctx.setFontSize(1);
 
-        this.ctx.moveTo(0, h / 2);
-        this.ctx.lineTo(w, h / 2);
-
-        this.ctx.moveTo(w / 2, 0);
-        this.ctx.lineTo(w / 2, h);
-
-        this.ctx.translate(this.x + w / 2, this.y + h / 2);
+        this.ctx.translate(w / 2, h / 2);
         this.ctx.scale(this.scale, -this.scale);
+        this.ctx.translate(this.x, this.y);
 
-        w /= this.scale;
-        h /= this.scale;
+        w /= this.scale * 2;
+        h /= this.scale * 2;
 
-        this.x1 = this.x - w / 2;
-        this.x2 = this.x1 + w;
+        this.x1 = -this.x - w;
+        this.x2 = -this.x + w;
 
-        this.y1 = this.y - h / 2;
-        this.y1 -= this.y1 % this.step[2];
-        this.y2 = this.y1 + h;
+        this.y1 = -this.y - h;
+        this.y2 = -this.y + h;
 
         this.layout = PangoCairo.create_layout(this.ctx);
 
@@ -86,38 +96,49 @@ Canvas.prototype = {
     },
 
     drawAxis: function(){
-        for(let x = this.x1 - this.x1 % this.step[2]; x <= this.x2; x += this.step[2]){
+        this.ctx.moveTo(this.x1, 0);
+        this.ctx.lineTo(this.x2, 0);
+
+        this.ctx.moveTo(0, this.y1);
+        this.ctx.lineTo(0, this.y2);
+
+        let x1 = Math.floor(this.x1 / this.step[0]);
+        let x2 = Math.ceil(this.x2 / this.step[0]);
+        let y1 = Math.floor(this.y1 / this.step[0]);
+        let y2 = Math.ceil(this.y2 / this.step[0]);
+
+        for(let x = x1; x <= x2; ++x){
             if(x === 0)
                 continue;
 
-            let size = this.size[2];
-            if(x % this.step[1] === 0){
+            let size = this.size[0];
+            if(x % 5 === 0){
                 size = this.size[1];
-                this.drawAxisText(x, x, null);
+                this.drawAxisText(x * this.step[0], x * this.step[0], null);
             }
-            if(x % this.step[0] === 0)
-                size = this.size[0];
+            if(x % 10 === 0)
+                size = this.size[2];
 
-            this.ctx.moveTo(x, -size);
-            this.ctx.lineTo(x, size);
+            this.ctx.moveTo(x * this.step[0], -size / this.scale);
+            this.ctx.lineTo(x * this.step[0], size / this.scale);
         }
 
-        for(let y = this.y1 - this.y1 % this.step[2]; y <= this.y2; y += this.step[2]){
+        for(let y = y1; y <= y2; ++y){
             if(y === 0){
                 this.drawAxisText(0, null, null);
                 continue;
             }
 
-            let size = this.size[2];
-            if(y % this.step[1] === 0){
+            let size = this.size[0];
+            if(y % 5 === 0){
                 size = this.size[1];
-                this.drawAxisText(y, null, y);
+                this.drawAxisText(y * this.step[0], null, y * this.step[0]);
             }
-            if(y % this.step[0] === 0)
-                size = this.size[0];
+            if(y % 10 === 0)
+                size = this.size[2];
 
-            this.ctx.moveTo(-size, y);
-            this.ctx.lineTo(size, y);
+            this.ctx.moveTo(-size / this.scale, y * this.step[0]);
+            this.ctx.lineTo(size / this.scale, y * this.step[0]);
         }
 
         this.ctx.save();
@@ -128,22 +149,27 @@ Canvas.prototype = {
 
     drawAxisText: function(text, x, y){
         this.ctx.save();
-        this.ctx.scale(this.textScale, this.textScale);
+        this.ctx.scale(this.textScale / this.scale, this.textScale / this.scale);
         PangoCairo.update_layout(this.ctx, this.layout);
 
         this.layout.set_text(text + "", -1);
         let size = this.layout.get_extents()[0];
 
-        if(x === null && y === null){
-            x = -1 / this.textScale - size.width / Pango.SCALE;
-            y = -1 / this.textScale;
-        } else if(x === null){
-            x = -1 / this.textScale - size.width / Pango.SCALE;
-            y = y / this.textScale + size.height / Pango.SCALE;
-        } else if(y === null){
-            x = x / this.textScale - size.width / 2 / Pango.SCALE;
-            y = -1 / this.textScale;
-        }
+        let width = -size.width / Pango.SCALE;
+        let height = size.height / Pango.SCALE;
+
+        let aScale = -this.size[2] * 1.2 / this.textScale;
+        let bScale = this.scale / this.textScale;
+
+        if(x === null)
+            x = aScale + width;
+        else
+            x = x * bScale + width / 2;
+
+        if(y === null)
+            y = aScale + height / 2;
+        else
+            y = y * bScale + height;
 
         this.ctx.moveTo(x, y);
         this.ctx.scale(1, -1);
@@ -178,6 +204,112 @@ Canvas.prototype = {
         this.ctx.identityMatrix();
         this.ctx.stroke();
         this.ctx.restore();
+    },
+
+    onScroll: function(actor, event){
+        let direction = event.get_scroll_direction();
+        let scale = 0;
+        let currentScale = this.scale + this.animation.scale[1];
+
+        if(direction === Clutter.ScrollDirection.DOWN)
+            scale = currentScale / 10;
+        else if(direction === Clutter.ScrollDirection.UP)
+            scale = currentScale / -10;
+
+        if(!this.scale) //nothing happened
+            return false;
+
+        if(this.settings.animations & 1){
+            this.animation.timeline.stop();
+            this.animation.scale[1] += scale - (this.scale - this.animation.scale[0]);
+            this.animation.scale[0] = this.scale;
+            this.animation.timeline.start();
+        } else {
+            this.scale += scale;
+            this.calculateScale();
+            this.repaint();
+        }
+        return true;
+    },
+
+    onKeyPress: function(actor, event){
+        let symbol = event.get_key_symbol();
+
+        let x = 0;
+        let y = 0;
+
+        if(symbol === Clutter.KEY_Left)
+            x = 1;
+        else if(symbol === Clutter.KEY_Up)
+            y = -1;
+        else if(symbol === Clutter.KEY_Right)
+            x = -1;
+        else if(symbol === Clutter.KEY_Down)
+            y = 1;
+
+        if(!x && !y) //nothing happened
+            return false;
+
+        x *= 10 / this.scale;
+        y *= 10 / this.scale;
+
+        if(this.settings.animations & 2){
+            Tweener.addTween(this, {
+                x: this.x + x,
+                y: this.y + y,
+                dx: 0,
+                dy: 0,
+                time: .25,
+                onUpdate: bind(this.repaint, this)
+            });
+        } else {
+            this.x += x;
+            this.y += y;
+            this.repaint();
+        }
+        return true;
+    },
+
+    animationFrame: function(timeline, time){
+        if(time < this.animation.duration){
+            if(this.animation.scale[1]){
+                this.scale = TweenEquations.easeOutExpo(time, this.animation.scale[0], this.animation.scale[1], this.animation.duration);
+                this.calculateScale();
+            }
+        } else {
+            if(this.animation.scale[1]){
+                this.scale = this.animation.scale[0] + this.animation.scale[1];
+                this.animation.scale[1] = 0;
+                this.calculateScale();
+            }
+        }
+
+        this.repaint();
+    },
+
+    calculateScale: function(){
+        let value = 100 / this.scale;
+
+        let exp = Math.pow(10, Math.floor(Math.log(value) / Math.LN10));
+
+        value /= exp;
+
+        if(value > 5)
+            value = 5;
+        else if(value > 2)
+            value = 2;
+        else
+            value = 1;
+
+        value *= exp;
+
+        let step = [
+            value / 5,
+            value,
+            value * 2
+        ];
+
+        this.step = step;
     }
 };
 
@@ -286,29 +418,33 @@ PlotterApplet.prototype = {
     __proto__: Applet.IconApplet.prototype,
 
     _init: function(metadata, orientation, panelHeight, instanceId){
-        try {
-            Applet.IconApplet.prototype._init.call(this, orientation, panelHeight);
+        Applet.IconApplet.prototype._init.call(this, orientation, panelHeight);
 
-            this.set_applet_icon_symbolic_name("accessories-calculator");
+        this.set_applet_icon_symbolic_name("accessories-calculator");
 
-            this.menuManager = new PopupMenu.PopupMenuManager(this);
-            this.menu = new Applet.AppletPopupMenu(this, orientation);
-            this.menuManager.addMenu(this.menu);
+        this.settings = {};
+        this.settingProvider = new Settings.AppletSettings(this.settings, metadata.uuid, instanceId);
+        this.settingProvider.bindProperty(Settings.BindingDirection.IN, "animations", "animations");
 
-            this.canvas = new Canvas(this);
-            this.entries = new PopupMenu.PopupMenuSection;
-            let entryMenuItem = new AddMathEntryMenuItem(this);
+        this.menuManager = new PopupMenu.PopupMenuManager(this);
+        this.menu = new Applet.AppletPopupMenu(this, orientation);
+        this.menuManager.addMenu(this.menu);
 
-            this.menu.addMenuItem(this.canvas);
-            this.menu.addMenuItem(this.entries);
-            this.menu.addMenuItem(entryMenuItem);
-        } catch(e){
-            global.logError(e);
-        }
+        this.canvas = new Canvas(this);
+        this.entries = new PopupMenu.PopupMenuSection;
+        let entryMenuItem = new AddMathEntryMenuItem(this);
+
+        this.menu.addMenuItem(this.canvas);
+        this.menu.addMenuItem(this.entries);
+        this.menu.addMenuItem(entryMenuItem);
     },
 
     on_applet_clicked: function(){
         this.menu.toggle();
+    },
+
+    on_applet_removed_from_panel: function(){
+        this.settingProvider.finalize();
     }
 };
 

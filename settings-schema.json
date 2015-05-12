@@ -1,0 +1,13 @@
+{
+    "animations": {
+        "type": "combobox",
+        "description": "Animations",
+        "options": {
+            "None": 0,
+            "Zoom": 1,
+            "Move": 2,
+            "All": 3
+        },
+        "default": 1
+    }
+}
