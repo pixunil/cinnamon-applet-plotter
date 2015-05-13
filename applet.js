@@ -10,6 +10,12 @@ const St = imports.gi.St;
 
 const TweenEquations = imports.tweener.equations;
 
+const AnimationSettingMap = {
+    scale: 1,
+    x: 2,
+    y: 2
+};
+
 function bind(func, context){
     function callback(){
         try {
@@ -45,6 +51,9 @@ Canvas.prototype = {
 
         this.actor.connect("scroll-event", bind(this.onScroll, this));
         this.actor.connect("key-press-event", bind(this.onKeyPress, this));
+        this.actor.connect("button-press-event", bind(this.onButtonPress, this));
+        this.actor.connect("button-release-event", bind(this.onButtonRelease, this));
+        this.actor.connect("motion-event", bind(this.onMotion, this));
 
         this.applet = applet;
         this.settings = applet.settings;
@@ -53,7 +62,9 @@ Canvas.prototype = {
         this.size = [2, 4, 8];
 
         this.animation = {
-            duration: 5000,
+            duration: 500,
+            x: [this.x, 0],
+            y: [this.y, 0],
             scale: [this.scale, 0]
         };
 
@@ -216,19 +227,8 @@ Canvas.prototype = {
         else if(direction === Clutter.ScrollDirection.UP)
             scale = currentScale / -10;
 
-        if(!this.scale) //nothing happened
-            return false;
+        this.transformCanvas({scale: scale});
 
-        if(this.settings.animations & 1){
-            this.animation.timeline.stop();
-            this.animation.scale[1] += scale - (this.scale - this.animation.scale[0]);
-            this.animation.scale[0] = this.scale;
-            this.animation.timeline.start();
-        } else {
-            this.scale += scale;
-            this.calculateScale();
-            this.repaint();
-        }
         return true;
     },
 
@@ -253,41 +253,95 @@ Canvas.prototype = {
         x *= 10 / this.scale;
         y *= 10 / this.scale;
 
-        if(this.settings.animations & 2){
-            Tweener.addTween(this, {
-                x: this.x + x,
-                y: this.y + y,
-                dx: 0,
-                dy: 0,
-                time: .25,
-                onUpdate: bind(this.repaint, this)
-            });
-        } else {
-            this.x += x;
-            this.y += y;
-            this.repaint();
-        }
+        this.transformCanvas({x: x, y: y});
+
         return true;
     },
 
-    animationFrame: function(timeline, time){
-        if(time < this.animation.duration){
-            if(this.animation.scale[1]){
-                this.scale = TweenEquations.easeOutExpo(time, this.animation.scale[0], this.animation.scale[1], this.animation.duration);
-                this.calculateScale();
-            }
-        } else {
-            if(this.animation.scale[1]){
-                this.scale = this.animation.scale[0] + this.animation.scale[1];
-                this.animation.scale[1] = 0;
-                this.calculateScale();
+    onButtonPress: function(actor, event){
+        if(this.dragging) //a drag is active, disallow two at the same time
+            return;
+
+        this.dragging = event.get_coords();
+    },
+
+    onButtonRelease: function(actor, event){
+        delete this.dragging;
+    },
+
+    onMotion: function(actor, event){
+        if(!this.dragging) //ignore motion events without pressing a mouse button
+            return;
+
+        let [x, y] = event.get_coords();
+        let dx = (x - this.dragging[0]) / this.scale; //calculate the delta value and scale it
+        let dy = (this.dragging[1] - y) / this.scale; //same like dx, but invert y value
+
+        this.transformCanvas({x: dx, y: dy}); //apply the transformation
+        this.dragging = [x, y];
+    },
+
+    transformCanvas: function(params){
+        let needsTimelineReset = false;
+        let needsRepaint = false;
+
+        for(let param in params){
+            if(!params[param])
+                continue;
+
+            if(this.settings.animations & AnimationSettingMap[param]){ //enabled animation
+                needsTimelineReset = true;
+                this.animation[param][1] += params[param] + this.animation[param][0] - this[param]; //update the delta parameter, add the new, remove that what we already have
+                this.animation[param][0] = this[param]; //set the absolute paramter
+            } else { //disabled
+                needsRepaint = true;
+                this[param] += params[param]; //update the normal value immediately
             }
         }
+
+        if(params.scale) //special case scale: we need to update our axis steps
+            this.calculateAxisSteps();
+
+        if(needsTimelineReset){
+            //we need to update the animation parameters
+            for(let param in this.animation){
+                let value = this.animation[param];
+                if(!(value instanceof Array) || params[param] || !(this.settings.animations & AnimationSettingMap[param])) //do nothing for invalid, already handled or unanimated values
+                    continue;
+
+                value[1] += value[0] - this[param]; //update the delta parameter, remove that what we already have
+                value[0] = this[param]; //set the absolute paramter
+            }
+            this.animation.timeline.stop();
+            this.animation.timeline.start();
+        }
+
+        if(needsRepaint)
+            this.repaint();
+    },
+
+    animationFrame: function(timeline, time){
+        for(let param in this.animation){
+            let value = this.animation[param];
+            if(!(value instanceof Array) || !value[1])
+                continue;
+
+            if(time < this.animation.duration)
+                this[param] = TweenEquations.easeOutExpo(time, this.animation[param][0], this.animation[param][1], this.animation.duration);
+            else {
+                this[param] = this.animation[param][0] + this.animation[param][1];
+                this.animation[param][0] = this[param];
+                this.animation[param][1] = 0;
+            }
+        }
+
+        if(this.animation.scale[1]) //special case scale: we need to update our axis steps
+            this.calculateAxisSteps();
 
         this.repaint();
     },
 
-    calculateScale: function(){
+    calculateAxisSteps: function(){
         let value = 100 / this.scale;
 
         let exp = Math.pow(10, Math.floor(Math.log(value) / Math.LN10));
@@ -354,6 +408,26 @@ MathEntryMenuItem.prototype = {
     }
 };
 
+function MathEntry(){
+    this._init.apply(this, arguments);
+}
+
+MathEntry.prototype = {
+    _init: function(parent, text){
+        this.actor = new St.Entry({text: text});
+
+        this.entryText = this.actor.clutter_text;
+    },
+
+    get text(){
+        return this.entryText.text;
+    },
+
+    set text(text){
+        this.entryText.text = text;
+    }
+};
+
 function AddMathEntryMenuItem(){
     this._init.apply(this, arguments);
 }
@@ -388,26 +462,6 @@ AddMathEntryMenuItem.prototype = {
     },
 
     onTextChanged: function(){}
-};
-
-function MathEntry(){
-    this._init.apply(this, arguments);
-}
-
-MathEntry.prototype = {
-    _init: function(parent, text){
-        this.actor = new St.Entry({text: text});
-
-        this.entryText = this.actor.clutter_text;
-    },
-
-    get text(){
-        return this.entryText.text;
-    },
-
-    set text(text){
-        this.entryText.text = text;
-    }
 };
 
 function PlotterApplet(metadata, orientation, panelHeight, instanceId){
