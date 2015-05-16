@@ -1,7 +1,6 @@
 const Applet = imports.ui.applet;
 const PopupMenu = imports.ui.popupMenu;
 const Settings = imports.ui.settings;
-const Tweener = imports.ui.tweener;
 
 const Clutter = imports.gi.Clutter;
 const Pango = imports.gi.Pango;
@@ -49,6 +48,7 @@ Canvas.prototype = {
         this.canvas.connect("repaint", bind(this.draw, this));
         this.addActor(this.canvas, {expand: true, span: -1});
 
+        this.actor.connect("show", bind(this.applyTransform, this));
         this.actor.connect("scroll-event", bind(this.onScroll, this));
         this.actor.connect("key-press-event", bind(this.onKeyPress, this));
         this.actor.connect("button-press-event", bind(this.onButtonPress, this));
@@ -58,7 +58,6 @@ Canvas.prototype = {
         this.applet = applet;
         this.settings = applet.settings;
 
-        this.step = [1, 5, 10];
         this.size = [2, 4, 8];
 
         this.animation = {
@@ -88,15 +87,6 @@ Canvas.prototype = {
         this.ctx.scale(this.scale, -this.scale);
         this.ctx.translate(this.x, this.y);
 
-        w /= this.scale * 2;
-        h /= this.scale * 2;
-
-        this.x1 = -this.x - w;
-        this.x2 = -this.x + w;
-
-        this.y1 = -this.y - h;
-        this.y2 = -this.y + h;
-
         this.layout = PangoCairo.create_layout(this.ctx);
 
         let description = Pango.FontDescription.from_string("Noto Sans 10");
@@ -107,18 +97,16 @@ Canvas.prototype = {
     },
 
     drawAxis: function(){
-        this.ctx.moveTo(this.x1, 0);
-        this.ctx.lineTo(this.x2, 0);
+        this.ctx.moveTo(this.x1, this.axis.y);
+        this.ctx.lineTo(this.x2, this.axis.y);
 
-        this.ctx.moveTo(0, this.y1);
-        this.ctx.lineTo(0, this.y2);
+        this.ctx.moveTo(this.axis.x, this.y1);
+        this.ctx.lineTo(this.axis.x, this.y2);
 
-        let x1 = Math.floor(this.x1 / this.step[0]);
-        let x2 = Math.ceil(this.x2 / this.step[0]);
-        let y1 = Math.floor(this.y1 / this.step[0]);
-        let y2 = Math.ceil(this.y2 / this.step[0]);
+        if(this.axis.x === 0 || this.axis.y === 0)
+            this.drawAxisText(0, null, null);
 
-        for(let x = x1; x <= x2; ++x){
+        for(let x = this.axis.tx1; x <= this.axis.tx2; ++x){
             if(x === 0)
                 continue;
 
@@ -130,15 +118,13 @@ Canvas.prototype = {
             if(x % 10 === 0)
                 size = this.size[2];
 
-            this.ctx.moveTo(x * this.step[0], -size / this.scale);
-            this.ctx.lineTo(x * this.step[0], size / this.scale);
+            this.ctx.moveTo(x * this.step[0], this.axis.y - size / this.scale);
+            this.ctx.lineTo(x * this.step[0], this.axis.y + size / this.scale);
         }
 
-        for(let y = y1; y <= y2; ++y){
-            if(y === 0){
-                this.drawAxisText(0, null, null);
+        for(let y = this.axis.ty1; y <= this.axis.ty2; ++y){
+            if(y === 0)
                 continue;
-            }
 
             let size = this.size[0];
             if(y % 5 === 0){
@@ -148,8 +134,8 @@ Canvas.prototype = {
             if(y % 10 === 0)
                 size = this.size[2];
 
-            this.ctx.moveTo(-size / this.scale, y * this.step[0]);
-            this.ctx.lineTo(size / this.scale, y * this.step[0]);
+            this.ctx.moveTo(this.axis.x - size / this.scale, y * this.step[0]);
+            this.ctx.lineTo(this.axis.x + size / this.scale, y * this.step[0]);
         }
 
         this.ctx.save();
@@ -166,21 +152,28 @@ Canvas.prototype = {
         this.layout.set_text(text + "", -1);
         let size = this.layout.get_extents()[0];
 
-        let width = -size.width / Pango.SCALE;
+        let width = size.width / Pango.SCALE;
         let height = size.height / Pango.SCALE;
 
-        let aScale = -this.size[2] * 1.2 / this.textScale;
-        let bScale = this.scale / this.textScale;
+        let scale = this.scale / this.textScale;
 
-        if(x === null)
-            x = aScale + width;
-        else
-            x = x * bScale + width / 2;
+        if(x === null){
+            x = this.axis.x * scale;
+            if(this.x > 0)
+                x -= width + this.size[2] / this.textScale;
+            else
+                x += this.size[2] / this.textScale;
+        } else
+            x = x * scale - width / 2;
 
-        if(y === null)
-            y = aScale + height / 2;
-        else
-            y = y * bScale + height;
+        if(y === null){
+            y = this.axis.y * scale;
+            if(this.y > 0)
+                y -= this.size[2];
+            else
+                y += this.size[2] + 2 * height;
+        } else
+            y = y * scale + height;
 
         this.ctx.moveTo(x, y);
         this.ctx.scale(1, -1);
@@ -299,8 +292,7 @@ Canvas.prototype = {
             }
         }
 
-        if(params.scale) //special case scale: we need to update our axis steps
-            this.calculateAxisSteps();
+        this.applyTransform();
 
         if(needsTimelineReset){
             //we need to update the animation parameters
@@ -320,6 +312,44 @@ Canvas.prototype = {
             this.repaint();
     },
 
+    applyTransform: function(){
+        let value = 100 / this.scale;
+        let exp = Math.pow(10, Math.floor(Math.log(value) / Math.LN10));
+        value /= exp;
+
+        if(value > 5)
+            value = 5 * exp;
+        else if(value > 2)
+            value = 2 * exp;
+        else
+            value = exp;
+
+        this.step = [
+            value / 5,
+            value,
+            value * 2
+        ];
+
+        let w = this.canvas.get_width() / 2;
+        let h = this.canvas.get_height() / 2;
+
+        this.x1 = -this.x - w / this.scale;
+        this.x2 = -this.x + w / this.scale;
+
+        this.y1 = -this.y - h / this.scale;
+        this.y2 = -this.y + h / this.scale;
+
+        this.axis = {
+            x: Math.max(this.x1, Math.min(this.x2, 0)), //the x coordinate for the y axis
+            y: Math.max(this.y1, Math.min(this.y2, 0)), //the y coordinate for the x axis
+
+            tx1: Math.floor(this.x1 / this.step[0]), //the start x coordinate for the steps
+            tx2: Math.ceil(this.x2 / this.step[0]), //the end x coordinate for the steps
+            ty1: Math.floor(this.y1 / this.step[0]), //the start y coordinate for the steps
+            ty2: Math.ceil(this.y2 / this.step[0]) //the end y coordinate for the steps
+        };
+    },
+
     animationFrame: function(timeline, time){
         for(let param in this.animation){
             let value = this.animation[param];
@@ -335,35 +365,29 @@ Canvas.prototype = {
             }
         }
 
-        if(this.animation.scale[1]) //special case scale: we need to update our axis steps
-            this.calculateAxisSteps();
+        this.applyTransform();
 
         this.repaint();
+    }
+};
+
+function MathEntry(){
+    this._init.apply(this, arguments);
+}
+
+MathEntry.prototype = {
+    _init: function(parent, text){
+        this.actor = new St.Entry({text: text});
+
+        this.entryText = this.actor.clutter_text;
     },
 
-    calculateAxisSteps: function(){
-        let value = 100 / this.scale;
+    get text(){
+        return this.entryText.text;
+    },
 
-        let exp = Math.pow(10, Math.floor(Math.log(value) / Math.LN10));
-
-        value /= exp;
-
-        if(value > 5)
-            value = 5;
-        else if(value > 2)
-            value = 2;
-        else
-            value = 1;
-
-        value *= exp;
-
-        let step = [
-            value / 5,
-            value,
-            value * 2
-        ];
-
-        this.step = step;
+    set text(text){
+        this.entryText.text = text;
     }
 };
 
@@ -405,26 +429,6 @@ MathEntryMenuItem.prototype = {
         }
 
         this.setShowDot(this.func);
-    }
-};
-
-function MathEntry(){
-    this._init.apply(this, arguments);
-}
-
-MathEntry.prototype = {
-    _init: function(parent, text){
-        this.actor = new St.Entry({text: text});
-
-        this.entryText = this.actor.clutter_text;
-    },
-
-    get text(){
-        return this.entryText.text;
-    },
-
-    set text(text){
-        this.entryText.text = text;
     }
 };
 
