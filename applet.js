@@ -9,6 +9,8 @@ const St = imports.gi.St;
 
 const TweenEquations = imports.tweener.equations;
 
+const math = imports.ui.appletManager.applets["plotter@pixunil"].math;
+
 const AnimationSettingMap = {
     scale: 1,
     x: 2,
@@ -48,7 +50,7 @@ Canvas.prototype = {
         this.canvas.connect("repaint", bind(this.draw, this));
         this.addActor(this.canvas, {expand: true, span: -1});
 
-        this.actor.connect("show", bind(this.applyTransform, this));
+        this.actor.connect("allocation-changed", bind(this.applyTransform, this));
         this.actor.connect("scroll-event", bind(this.onScroll, this));
         this.actor.connect("key-press-event", bind(this.onKeyPress, this));
         this.actor.connect("button-press-event", bind(this.onButtonPress, this));
@@ -376,7 +378,7 @@ function MathEntry(){
 }
 
 MathEntry.prototype = {
-    _init: function(parent, text){
+    _init: function(text){
         this.actor = new St.Entry({text: text});
 
         this.entryText = this.actor.clutter_text;
@@ -403,7 +405,7 @@ MathEntryMenuItem.prototype = {
 
         this.applet = applet;
 
-        this.entry = new MathEntry(this, text);
+        this.entry = new MathEntry(text);
         this.addActor(this.entry.actor, {span: -1, expand: true});
 
         this.entry.entryText.connect("text-changed", bind(this.onTextChanged, this));
@@ -418,17 +420,35 @@ MathEntryMenuItem.prototype = {
         this.func = null;
 
         if(this.entry.text){
-            let text = "return " + this.entry.text + ";";
+            if(this.entry.text.indexOf("x") > -1){
+                this.layout = "function";
+                let text = "return " + this.entry.text + ";";
 
-            try {
-                this.func = Function.constructor.call(null, ["x"], text);
-                this.applet.canvas.repaint();
-            } catch(e){
-                this.func = null;
+                try {
+                    this.func = Function.constructor.call(null, ["x"], text);
+                    this.applet.canvas.repaint();
+                } catch(e){}
+            } else {
+                this.layout = "variable";
+                let result = math.calculate(math.parse(this.entry.text));
+                this.resultLabel.text = "= " + result;
             }
         }
 
         this.setShowDot(this.func);
+    },
+
+    set layout(layout){
+        if(layout === "function" && this.resultLabel){
+            this.resultLabel.destroy();
+
+            this._children[0].span = -1;
+        } else if(layout === "variable" && !this.resultLabel){
+            this.resultLabel = new St.Label;
+            this.addActor(this.resultLabel);
+
+            this._children[0].span = 1;
+        }
     }
 };
 
@@ -449,7 +469,7 @@ AddMathEntryMenuItem.prototype = {
             this.actor.add_style_class_name("popup-inactive-menu-item");
         }, this));
 
-        this.entry.actor.hint_text = _("Add function ...");
+        this.entry.actor.hint_text = _("Add function or variable ...");
         this.entry.entryText.connect("key-press-event", bind(this.onKeyPress, this));
     },
 
