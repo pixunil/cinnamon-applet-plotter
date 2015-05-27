@@ -10,11 +10,11 @@ const regEx = (function(){
         return new RegExp("^\\s*" + str + "\\s*$");
     }
 
-    function operator(){
-        let args = Array.prototype.slice.call(arguments);
-
+    function operator(...args){
         return new RegExp("^(" + stuff + ")(" + args.join("|") + ")(" + stuff + ")$");
     }
+
+    const input = "^(?:\\s*(" + variable + ")(" + bracket + ")?\\s*[=:→])?(.+)$";
 
     return {
         float: value(float),
@@ -24,7 +24,11 @@ const regEx = (function(){
         bracket: value("\\((" + stuff + ")\\)"),
 
         add: operator("[+-]"),
-        mult: operator("(?!^)[*/]")
+        mult: operator("(?!^)[*/]"),
+
+
+        input: new RegExp(input),
+        whitespace: /^\s*$/
     };
 })();
 
@@ -45,6 +49,23 @@ const operators = {
         }
     }
 };
+
+function parseOperatorChain(obj, operator, symbol, str){
+    function append(value){
+        let key = operators[operator].symbols[symbol];
+        if(obj[key] instanceof Array)
+            obj[key].push(value);
+        else
+            obj[key] = [value];
+    }
+
+    let result = str.match(regEx[operator]);
+    if(result){
+        append(parse(result[1]));
+        parseOperatorChain(obj, operator, result[2], result[3]);
+    } else
+        append(parse(str));
+}
 
 function parse(str){
     //if string is a bracket, parse the content of it
@@ -76,23 +97,6 @@ function parse(str){
     }
 
     throw "Token `" + str + "` could not be parsed.";
-}
-
-function parseOperatorChain(obj, operator, symbol, str){
-    function append(value){
-        let key = operators[operator].symbols[symbol];
-        if(obj[key] instanceof Array)
-            obj[key].push(value);
-        else
-            obj[key] = [value];
-    }
-
-    let result = str.match(regEx[operator]);
-    if(result){
-        append(parse(result[1]));
-        parseOperatorChain(obj, operator, result[2], result[3]);
-    } else
-        append(parse(str));
 }
 
 function calculate(obj){

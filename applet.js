@@ -46,7 +46,7 @@ Canvas.prototype = {
     _init: function(applet){
         PopupMenu.PopupBaseMenuItem.prototype._init.call(this, {activate: false, sensitive: false});
 
-        this.canvas = new St.DrawingArea({width: 400, height: 250});
+        this.canvas = new St.DrawingArea({height: 250});
         this.canvas.connect("repaint", bind(this.draw, this));
         this.addActor(this.canvas, {expand: true, span: -1});
 
@@ -400,54 +400,83 @@ function MathEntryMenuItem(){
 MathEntryMenuItem.prototype = {
     __proto__: PopupMenu.PopupBaseMenuItem.prototype,
 
-    _init: function(applet, text){
+    _init: function(applet, symbol, text){
         PopupMenu.PopupBaseMenuItem.prototype._init.call(this, {activate: false});
 
         this.applet = applet;
 
+        this.symbol = new MathEntry(symbol);
+        this.addActor(this.symbol.actor, {expand: true});
+
+        this.symbolEqualLabel = new St.Label;
+        this.addActor(this.symbolEqualLabel);
+
         this.entry = new MathEntry(text);
-        this.addActor(this.entry.actor, {span: -1, expand: true});
+        this.addActor(this.entry.actor, {expand: true});
+
+        this.resultEqualLabel = new St.Label;
+        this.addActor(this.resultEqualLabel);
+
+        this.resultLabel = new St.Label;
+        this.addActor(this.resultLabel);
+
+        this.symbol.entryText.connect("text-changed", bind(this.onSymbolChanged, this));
+        this.onSymbolChanged();
 
         this.entry.entryText.connect("text-changed", bind(this.onTextChanged, this));
-
         this.onTextChanged();
     },
 
     _onKeyFocusIn: function(){},
     _onKeyFocusOut: function(){},
 
+    onSymbolChanged: function(){
+        if(this.symbol.text)
+            this.symbolEqualLabel.text = "=";
+        else
+            this.symbolEqualLabel.text = "";
+    },
+
     onTextChanged: function(){
+        let showDot = false;
         this.func = null;
 
         if(this.entry.text){
             if(this.entry.text.indexOf("x") > -1){
-                this.layout = "function";
                 let text = "return " + this.entry.text + ";";
 
                 try {
                     this.func = Function.constructor.call(null, ["x"], text);
-                    this.applet.canvas.repaint();
                 } catch(e){}
+
+                if(this.func){
+                    showDot = true;
+                    this.result = "";
+                    this.applet.canvas.repaint();
+                }
             } else {
-                this.layout = "variable";
-                let result = math.calculate(math.parse(this.entry.text));
-                this.resultLabel.text = "= " + result;
+                let result;
+                try {
+                    result = math.calculate(math.parse(this.entry.text));
+                } catch(e){}
+
+                if(result){
+                    showDot = true;
+                    this.result = result;
+                }
             }
         }
 
-        this.setShowDot(this.func);
+        this.setShowDot(showDot);
     },
 
-    set layout(layout){
-        if(layout === "function" && this.resultLabel){
-            this.resultLabel.destroy();
-
-            this._children[0].span = -1;
-        } else if(layout === "variable" && !this.resultLabel){
-            this.resultLabel = new St.Label;
-            this.addActor(this.resultLabel);
-
-            this._children[0].span = 1;
+    set result(result){
+        if(result !== ""){
+            this.resultEqualLabel.text = "=";
+            this.resultLabel.text = result + "";
+        } else {
+            this.resultEqualLabel.text = "";
+            this.resultLabel.text = "";
         }
     }
 };
@@ -457,10 +486,15 @@ function AddMathEntryMenuItem(){
 }
 
 AddMathEntryMenuItem.prototype = {
-    __proto__: MathEntryMenuItem.prototype,
+    __proto__: PopupMenu.PopupBaseMenuItem.prototype,
 
     _init: function(applet){
-        MathEntryMenuItem.prototype._init.call(this, applet, "");
+        PopupMenu.PopupBaseMenuItem.prototype._init.call(this, {activate: false});
+
+        this.applet = applet;
+
+        this.entry = new MathEntry("");
+        this.addActor(this.entry.actor, {span: -1, expand: true});
 
         this.actor.connect("enter-event", bind(function(){
             this.actor.remove_style_class_name("popup-inactive-menu-item");
@@ -473,10 +507,19 @@ AddMathEntryMenuItem.prototype = {
         this.entry.entryText.connect("key-press-event", bind(this.onKeyPress, this));
     },
 
+    _onKeyFocusIn: function(){},
+    _onKeyFocusOut: function(){},
+
     onKeyPress: function(actor, event){
         let symbol = event.get_key_symbol();
         if(symbol === Clutter.KEY_Return){
-            let menuItem = new MathEntryMenuItem(this.applet, this.entry.text);
+            //1: symbol, 2: function bracket, 3: content
+            let match = this.entry.text.match(math.regEx.input);
+
+            if(match[3].match(math.regEx.whitespace))
+                return false;
+
+            let menuItem = new MathEntryMenuItem(this.applet, match[1], match[3]);
             this.applet.entries.addMenuItem(menuItem);
             this.entry.text = "";
 
@@ -485,7 +528,9 @@ AddMathEntryMenuItem.prototype = {
         return false;
     },
 
-    onTextChanged: function(){}
+    getColumnWidths: function(){
+        return [];
+    }
 };
 
 function PlotterApplet(metadata, orientation, panelHeight, instanceId){
@@ -509,11 +554,22 @@ PlotterApplet.prototype = {
         this.menuManager.addMenu(this.menu);
 
         this.canvas = new Canvas(this);
-        this.entries = new PopupMenu.PopupMenuSection;
-        let entryMenuItem = new AddMathEntryMenuItem(this);
-
         this.menu.addMenuItem(this.canvas);
+
+        let headerItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
+        headerItem.actor.height = 0;
+        headerItem.actor.opacity = 0;
+        headerItem.addActor(new St.Bin({width: 20}));
+        headerItem.addActor(new St.Label({text: "="}));
+        headerItem.addActor(new St.Bin({width: 200}));
+        headerItem.addActor(new St.Label({text: "="}));
+        headerItem.addActor(new St.Bin({width: 40}));
+        this.menu.addMenuItem(headerItem);
+
+        this.entries = new PopupMenu.PopupMenuSection;
         this.menu.addMenuItem(this.entries);
+
+        let entryMenuItem = new AddMathEntryMenuItem(this);
         this.menu.addMenuItem(entryMenuItem);
     },
 
