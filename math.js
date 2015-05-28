@@ -50,24 +50,7 @@ const operators = {
     }
 };
 
-function parseOperatorChain(obj, operator, symbol, str){
-    function append(value){
-        let key = operators[operator].symbols[symbol];
-        if(obj[key] instanceof Array)
-            obj[key].push(value);
-        else
-            obj[key] = [value];
-    }
-
-    let result = str.match(regEx[operator]);
-    if(result){
-        append(parse(result[1]));
-        parseOperatorChain(obj, operator, result[2], result[3]);
-    } else
-        append(parse(str));
-}
-
-function parse(str){
+function parse(str, meta){
     //if string is a bracket, parse the content of it
     let result = str.match(regEx.bracket);
     if(result)
@@ -78,6 +61,13 @@ function parse(str){
         return parseFloat(str);
     if(str.match(regEx.int))
         return parseInt(str);
+
+    if(str.match(regEx.variable)){
+        let symbol = str.trim();
+        if(meta.deps.indexOf(symbol) === -1)
+            meta.deps.push(symbol);
+        return symbol;
+    }
 
     for(let operator in operators){
         let result = str.match(regEx[operator]);
@@ -90,44 +80,70 @@ function parse(str){
         };
 
         if(result[1])
-            obj[operator] = [parse(result[1])];
+            obj[operator] = [parse(result[1], meta)];
 
-        parseOperatorChain(obj, operator, result[2], result[3]);
+        parseOperatorChain(obj, operator, result[2], result[3], meta);
         return obj;
     }
 
     throw "Token `" + str + "` could not be parsed.";
 }
 
-function calculate(obj){
-    if(!(obj instanceof Object))
+function parseOperatorChain(obj, operator, symbol, str, meta){
+    function append(value){
+        let key = operators[operator].symbols[symbol];
+        if(obj[key] instanceof Array)
+            obj[key].push(value);
+        else
+            obj[key] = [value];
+    }
+
+    let result = str.match(regEx[operator]);
+    if(result){
+        append(parse(result[1], meta));
+        parseOperatorChain(obj, operator, result[2], result[3]);
+    } else
+        append(parse(str, meta));
+}
+
+function calculate(obj, res){
+    //no calculation to do on numbers
+    if(typeof obj === "number")
         return obj;
+
+    //look up for a variable
+    if(typeof obj === "string"){
+        if(res.vars[obj] !== undefined)
+            return res.vars[obj];
+
+        throw "Variable or constant `%s` not found".format(obj);
+    }
 
     let result = 0;
 
     if(obj.type === operators.add.enum){
         if(obj.add){
             obj.add.forEach(function(value){
-                result += calculate(value);
+                result += calculate(value, res);
             });
         }
 
         if(obj.sub){
             obj.sub.forEach(function(value){
-                result -= calculate(value);
+                result -= calculate(value, res);
             });
         }
     } else if(obj.type === operators.mult.enum){
         result = 1;
         if(obj.mult){
             obj.mult.forEach(function(value){
-                result *= calculate(value);
+                result *= calculate(value, res);
             });
         }
 
         if(obj.div){
             obj.div.forEach(function(value){
-                value = calculate(value);
+                value = calculate(value, res);
 
                 if(value === 0)
                     throw "Division with 0 is not defined";

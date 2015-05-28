@@ -50,7 +50,7 @@ Canvas.prototype = {
         this.canvas.connect("repaint", bind(this.draw, this));
         this.addActor(this.canvas, {expand: true, span: -1});
 
-        this.actor.connect("allocation-changed", bind(this.applyTransform, this));
+        this.canvas.connect("allocation-changed", bind(this.applyTransform, this));
         this.actor.connect("scroll-event", bind(this.onScroll, this));
         this.actor.connect("key-press-event", bind(this.onKeyPress, this));
         this.actor.connect("button-press-event", bind(this.onButtonPress, this));
@@ -82,31 +82,38 @@ Canvas.prototype = {
         let w = this.canvas.get_width();
         let h = this.canvas.get_height();
 
-        this.ctx.setSourceRGBA(.8, .8, .8, .5);
-        this.ctx.setFontSize(1);
-
         this.ctx.translate(w / 2, h / 2);
         this.ctx.scale(this.scale, -this.scale);
         this.ctx.translate(this.x, this.y);
 
+        this.drawFunctions();
+        this.drawAxis();
+    },
+
+    drawAxis: function(){
         this.layout = PangoCairo.create_layout(this.ctx);
 
         let description = Pango.FontDescription.from_string("Noto Sans 10");
         this.layout.set_font_description(description);
 
-        this.drawAxis();
-        this.drawFunctions();
-    },
-
-    drawAxis: function(){
-        this.ctx.moveTo(this.x1, this.axis.y);
-        this.ctx.lineTo(this.x2, this.axis.y);
-
-        this.ctx.moveTo(this.axis.x, this.y1);
-        this.ctx.lineTo(this.axis.x, this.y2);
+        this.ctx.setSourceRGBA(.8, .8, .8, .5);
+        this.ctx.setFontSize(1);
 
         if(this.axis.x === 0 || this.axis.y === 0)
             this.drawAxisText(0, null, null);
+
+        this.drawXAxis();
+        this.drawYAxis();
+
+        this.ctx.save();
+        this.ctx.identityMatrix();
+        this.ctx.stroke();
+        this.ctx.restore();
+    },
+
+    drawXAxis: function(){
+        this.ctx.moveTo(this.x1, this.axis.y);
+        this.ctx.lineTo(this.x2, this.axis.y);
 
         for(let x = this.axis.tx1; x <= this.axis.tx2; ++x){
             if(x === 0)
@@ -123,6 +130,11 @@ Canvas.prototype = {
             this.ctx.moveTo(x * this.step[0], this.axis.y - size / this.scale);
             this.ctx.lineTo(x * this.step[0], this.axis.y + size / this.scale);
         }
+    },
+
+    drawYAxis: function(){
+        this.ctx.moveTo(this.axis.x, this.y1);
+        this.ctx.lineTo(this.axis.x, this.y2);
 
         for(let y = this.axis.ty1; y <= this.axis.ty2; ++y){
             if(y === 0)
@@ -139,11 +151,6 @@ Canvas.prototype = {
             this.ctx.moveTo(this.axis.x - size / this.scale, y * this.step[0]);
             this.ctx.lineTo(this.axis.x + size / this.scale, y * this.step[0]);
         }
-
-        this.ctx.save();
-        this.ctx.identityMatrix();
-        this.ctx.stroke();
-        this.ctx.restore();
     },
 
     drawAxisText: function(text, x, y){
@@ -332,14 +339,14 @@ Canvas.prototype = {
             value * 2
         ];
 
-        let w = this.canvas.get_width() / 2;
-        let h = this.canvas.get_height() / 2;
+        let w = this.canvas.width / 2 / this.scale;
+        let h = this.canvas.height / 2 / this.scale;
 
-        this.x1 = -this.x - w / this.scale;
-        this.x2 = -this.x + w / this.scale;
+        this.x1 = -this.x - w;
+        this.x2 = -this.x + w;
 
-        this.y1 = -this.y - h / this.scale;
-        this.y2 = -this.y + h / this.scale;
+        this.y1 = -this.y - h;
+        this.y2 = -this.y + h;
 
         this.axis = {
             x: Math.max(this.x1, Math.min(this.x2, 0)), //the x coordinate for the y axis
@@ -378,7 +385,7 @@ function MathEntry(){
 }
 
 MathEntry.prototype = {
-    _init: function(text){
+    _init: function(text = ""){
         this.actor = new St.Entry({text: text});
 
         this.entryText = this.actor.clutter_text;
@@ -404,9 +411,11 @@ MathEntryMenuItem.prototype = {
         PopupMenu.PopupBaseMenuItem.prototype._init.call(this, {activate: false});
 
         this.applet = applet;
+        this.symbol = symbol;
 
-        this.symbol = new MathEntry(symbol);
-        this.addActor(this.symbol.actor, {expand: true});
+        this.symbolEntry = new MathEntry(symbol);
+        this.symbolEntry.entryText.x_align = Pango.Alignment.RIGHT;
+        this.addActor(this.symbolEntry.actor, {expand: true});
 
         this.symbolEqualLabel = new St.Label;
         this.addActor(this.symbolEqualLabel);
@@ -417,10 +426,11 @@ MathEntryMenuItem.prototype = {
         this.resultEqualLabel = new St.Label;
         this.addActor(this.resultEqualLabel);
 
+        this.resultTerm = null;
         this.resultLabel = new St.Label;
         this.addActor(this.resultLabel);
 
-        this.symbol.entryText.connect("text-changed", bind(this.onSymbolChanged, this));
+        this.symbolEntry.entryText.connect("text-changed", bind(this.onSymbolChanged, this));
         this.onSymbolChanged();
 
         this.entry.entryText.connect("text-changed", bind(this.onTextChanged, this));
@@ -431,15 +441,26 @@ MathEntryMenuItem.prototype = {
     _onKeyFocusOut: function(){},
 
     onSymbolChanged: function(){
-        if(this.symbol.text)
+        if(this.applet.res.vars[this.symbol] !== undefined)
+            delete this.applet.res.vars[this.symbol];
+
+        if(this.symbolEntry.text.match(math.regEx.variable)){
+            this.symbol = this.symbolEntry.text;
+            this.applet.res.vars[this.symbol] = this.resultTerm;
             this.symbolEqualLabel.text = "=";
-        else
+        } else {
+            this.symbol = null;
             this.symbolEqualLabel.text = "";
+        }
     },
 
     onTextChanged: function(){
         let showDot = false;
         this.func = null;
+
+        this.meta = {
+            deps: []
+        };
 
         if(this.entry.text){
             if(this.entry.text.indexOf("x") > -1){
@@ -455,9 +476,11 @@ MathEntryMenuItem.prototype = {
                     this.applet.canvas.repaint();
                 }
             } else {
+                this.term = null;
                 let result;
                 try {
-                    result = math.calculate(math.parse(this.entry.text));
+                    this.term = math.parse(this.entry.text, this.meta);
+                    result = math.calculate(this.term, this.applet.res);
                 } catch(e){}
 
                 if(result){
@@ -472,9 +495,17 @@ MathEntryMenuItem.prototype = {
 
     set result(result){
         if(result !== ""){
+            this.resultTerm = result;
+            if(this.symbol)
+                this.applet.res.vars[this.symbol] = this.resultTerm;
+
             this.resultEqualLabel.text = "=";
             this.resultLabel.text = result + "";
+
+            if(this.symbol)
+                this.applet.refreshEntries(this.symbol);
         } else {
+            this.resultTerm = null;
             this.resultEqualLabel.text = "";
             this.resultLabel.text = "";
         }
@@ -549,6 +580,10 @@ PlotterApplet.prototype = {
         this.settingProvider = new Settings.AppletSettings(this.settings, metadata.uuid, instanceId);
         this.settingProvider.bindProperty(Settings.BindingDirection.IN, "animations", "animations");
 
+        this.res = {
+            vars: {}
+        };
+
         this.menuManager = new PopupMenu.PopupMenuManager(this);
         this.menu = new Applet.AppletPopupMenu(this, orientation);
         this.menuManager.addMenu(this.menu);
@@ -556,9 +591,12 @@ PlotterApplet.prototype = {
         this.canvas = new Canvas(this);
         this.menu.addMenuItem(this.canvas);
 
+        //dummy actor to build the layout
         let headerItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
+        //it should not be visible, but handled by PopupMenu, so set height and opacity to 0
         headerItem.actor.height = 0;
         headerItem.actor.opacity = 0;
+        //using a St.Bin with a fixed width to have at minimum this width in entry columns
         headerItem.addActor(new St.Bin({width: 20}));
         headerItem.addActor(new St.Label({text: "="}));
         headerItem.addActor(new St.Bin({width: 200}));
@@ -571,6 +609,15 @@ PlotterApplet.prototype = {
 
         let entryMenuItem = new AddMathEntryMenuItem(this);
         this.menu.addMenuItem(entryMenuItem);
+    },
+
+    refreshEntries: function(symbol){
+        let entries = this.entries._getMenuItems();
+        for(let i = 0, l = entries.length; i < l; ++i){
+            let entry = entries[i];
+            if(entry.term && entry.meta.deps.indexOf(symbol) !== -1)
+                entries[i].result = math.calculate(entries[i].term, this.res);
+        }
     },
 
     on_applet_clicked: function(){
