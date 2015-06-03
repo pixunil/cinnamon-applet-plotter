@@ -1,6 +1,7 @@
 const Applet = imports.ui.applet;
 const PopupMenu = imports.ui.popupMenu;
 const Settings = imports.ui.settings;
+const Tooltips = imports.ui.tooltips;
 
 const Clutter = imports.gi.Clutter;
 const Pango = imports.gi.Pango;
@@ -205,12 +206,12 @@ Canvas.prototype = {
         for(let x = this.x1; x <= this.x2; x += .5 / this.scale){
             let y;
             try {
-                y = func(x);
+                y = func(x, this.applet.res.vars);
             } catch(e){
                 continue;
             }
 
-            this.ctx.lineTo(x, func(x));
+            this.ctx.lineTo(x, y);
         }
 
         this.ctx.save();
@@ -413,8 +414,9 @@ MathEntryMenuItem.prototype = {
         this.applet = applet;
         this.symbol = symbol;
 
+        this.tooltip = new Tooltips.Tooltip(this.actor, "");
+
         this.symbolEntry = new MathEntry(symbol);
-        this.symbolEntry.entryText.x_align = Pango.Alignment.RIGHT;
         this.addActor(this.symbolEntry.actor, {expand: true});
 
         this.symbolEqualLabel = new St.Label;
@@ -448,6 +450,7 @@ MathEntryMenuItem.prototype = {
             this.symbol = this.symbolEntry.text;
             this.applet.res.vars[this.symbol] = this.resultTerm;
             this.symbolEqualLabel.text = "=";
+            this.applet.refreshEntries(this.symbol);
         } else {
             this.symbol = null;
             this.symbolEqualLabel.text = "";
@@ -455,49 +458,59 @@ MathEntryMenuItem.prototype = {
     },
 
     onTextChanged: function(){
-        let showDot = false;
         this.func = null;
+        this.term = null;
 
-        this.meta = {
-            deps: []
-        };
+        this.deps = [];
+        this.type = "var";
 
         if(this.entry.text){
-            if(this.entry.text.indexOf("x") > -1){
-                let text = "return " + this.entry.text + ";";
+            try {
+                this.term = math.parse(this.entry.text, this);
+            } catch(e){
+                this.error = e;
+            }
 
+            if(this.type === "func"){
                 try {
-                    this.func = Function.constructor.call(null, ["x"], text);
-                } catch(e){}
-
-                if(this.func){
-                    showDot = true;
-                    this.result = "";
-                    this.applet.canvas.repaint();
+                    this.func = math.createFunction(this.term);
+                } catch(e){
+                    this.error = e;
                 }
-            } else {
-                this.term = null;
+            }
+
+            this.update();
+        }
+    },
+
+    update: function(){
+        if(this.type === "func"){
+            if(this.func){
+                this.error = "";
+                this.applet.canvas.repaint();
+            }
+        } else {
+            if(this.term !== null){
                 let result;
                 try {
-                    this.term = math.parse(this.entry.text, this.meta);
                     result = math.calculate(this.term, this.applet.res);
-                } catch(e){}
+                } catch(e){
+                    this.error = e;
+                }
 
-                if(result){
-                    showDot = true;
+                if(result !== undefined){
+                    this.error = "";
                     this.result = result;
                 }
             }
         }
-
-        this.setShowDot(showDot);
     },
 
     set result(result){
         if(result !== ""){
             this.resultTerm = result;
             if(this.symbol)
-                this.applet.res.vars[this.symbol] = this.resultTerm;
+                this.applet.res.vars[this.symbol] = result;
 
             this.resultEqualLabel.text = "=";
             this.resultLabel.text = result + "";
@@ -508,6 +521,29 @@ MathEntryMenuItem.prototype = {
             this.resultTerm = null;
             this.resultEqualLabel.text = "";
             this.resultLabel.text = "";
+        }
+    },
+
+    set error(error){
+        if(error){
+            if(error instanceof Error){
+                global.logError(error);
+                error = _("Program error");
+            }
+
+            if(!this.errorIcon){
+                this.errorIcon = new St.Icon({icon_type: St.IconType.SYMBOLIC, icon_name: "action-unavailable", style_class: "popup-menu-icon"});
+                this.addActor(this.errorIcon, {span: 0});
+            }
+
+            this.tooltip.set_text(_("Error: %s").format(error));
+        } else {
+            if(this.errorIcon){
+                this.removeActor(this.errorIcon);
+                delete this.errorIcon;
+            }
+
+            this.tooltip.set_text("");
         }
     }
 };
@@ -597,11 +633,11 @@ PlotterApplet.prototype = {
         headerItem.actor.height = 0;
         headerItem.actor.opacity = 0;
         //using a St.Bin with a fixed width to have at minimum this width in entry columns
-        headerItem.addActor(new St.Bin({width: 20}));
-        headerItem.addActor(new St.Label({text: "="}));
-        headerItem.addActor(new St.Bin({width: 200}));
-        headerItem.addActor(new St.Label({text: "="}));
-        headerItem.addActor(new St.Bin({width: 40}));
+        headerItem.addActor(new St.Bin({width: 20})); //symbol
+        headerItem.addActor(new St.Label({text: "="})); //symbol equal sign
+        headerItem.addActor(new St.Bin({width: 200})); //content
+        headerItem.addActor(new St.Label({text: "="})); //result equal sign
+        headerItem.addActor(new St.Bin({width: 40})); //result
         this.menu.addMenuItem(headerItem);
 
         this.entries = new PopupMenu.PopupMenuSection;
@@ -615,8 +651,8 @@ PlotterApplet.prototype = {
         let entries = this.entries._getMenuItems();
         for(let i = 0, l = entries.length; i < l; ++i){
             let entry = entries[i];
-            if(entry.term && entry.meta.deps.indexOf(symbol) !== -1)
-                entries[i].result = math.calculate(entries[i].term, this.res);
+            if(entry.term && entry.deps.indexOf(symbol) !== -1)
+                entries[i].update();
         }
     },
 

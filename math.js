@@ -64,8 +64,12 @@ function parse(str, meta){
 
     if(str.match(regEx.variable)){
         let symbol = str.trim();
-        if(meta.deps.indexOf(symbol) === -1)
+
+        if(symbol === "x")
+            meta.type = "func";
+        else if(meta.deps.indexOf(symbol) === -1)
             meta.deps.push(symbol);
+
         return symbol;
     }
 
@@ -154,4 +158,52 @@ function calculate(obj, res){
     }
 
     return result;
+}
+
+function createFunction(term){
+    let str = "return " + stringify(term) + ";";
+    return Function.constructor.call(null, ["x", "vars"], str);
+}
+
+function stringify(term, before = 0){
+    if(typeof term === "number")
+        return term;
+
+    if(typeof term === "string"){
+        if(term === "x")
+            return "x";
+        else
+            return "vars." + term; //use the resources object
+    }
+
+    for(let operator in operators){
+        operator = operators[operator];
+
+        if(term.type === operator.enum){
+            let str = "";
+
+            if(before > term.type)
+                str += "(";
+
+            for(let symbol in operator.symbols){
+                let name = operator.symbols[symbol];
+
+                if(term[name]){
+                    term[name].forEach(function(term){
+                        if(str)
+                            str += symbol;
+
+                        str += stringify(term, operator.enum);
+                    });
+                }
+            }
+
+            if(before > term.type)
+                str += ")";
+
+            return str;
+        }
+    }
+
+    throw "Could not turn term `" + JSON.stringify(term) + "` into a function string";
 }
