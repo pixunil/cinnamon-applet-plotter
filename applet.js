@@ -414,6 +414,8 @@ MathEntryMenuItem.prototype = {
         this.applet = applet;
         this.symbol = symbol;
 
+        this.engine = new math.Engine(this);
+
         this.tooltip = new Tooltips.Tooltip(this.actor, "");
 
         this.symbolEntry = new MathEntry(symbol);
@@ -458,22 +460,18 @@ MathEntryMenuItem.prototype = {
     },
 
     onTextChanged: function(){
-        this.func = null;
-        this.term = null;
-
-        this.deps = [];
-        this.type = "var";
-
         if(this.entry.text){
             try {
-                this.term = math.parse(this.entry.text, this);
+                this.engine.source = this.entry.text;
             } catch(e){
                 this.error = e;
             }
 
+            this.term = this.engine.term;
+
             if(this.type === "func"){
                 try {
-                    this.func = math.createFunction(this.term);
+                    this.func = this.engine.func;
                 } catch(e){
                     this.error = e;
                 }
@@ -491,16 +489,10 @@ MathEntryMenuItem.prototype = {
             }
         } else {
             if(this.term !== null){
-                let result;
                 try {
-                    result = math.calculate(this.term, this.applet.res);
+                    this.result = this.engine.result;
                 } catch(e){
                     this.error = e;
-                }
-
-                if(result !== undefined){
-                    this.error = "";
-                    this.result = result;
                 }
             }
         }
@@ -617,7 +609,8 @@ PlotterApplet.prototype = {
         this.settingProvider.bindProperty(Settings.BindingDirection.IN, "animations", "animations");
 
         this.res = {
-            vars: {}
+            vars: {},
+            funcs: {}
         };
 
         this.menuManager = new PopupMenu.PopupMenuManager(this);
