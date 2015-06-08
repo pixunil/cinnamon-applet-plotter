@@ -465,6 +465,7 @@ MathEntryMenuItem.prototype = {
                 this.engine.source = this.entry.text;
             } catch(e){
                 this.error = e;
+                return;
             }
 
             this.term = this.engine.term;

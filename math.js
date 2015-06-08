@@ -5,14 +5,15 @@ const regEx = (function(){
     const stuff = "[^()]*?(?:\\(.*?\\)[^()]*?)*?";
     const bracket = "\\(" + stuff + "\\)";
     const func = variable + bracket;
-    const legal = "(?:" + [float, int, variable, bracket].join("|") + ")";
+
+    const legal = "(" + [float, int, variable, bracket].join("|") + ")";
 
     function value(str){
         return new RegExp("^\\s*" + str + "\\s*$");
     }
 
-    function operator(...args){
-        return new RegExp("^(" + stuff + ")(" + args.join("|") + ")(" + stuff + ")$");
+    function operator(str){
+        return new RegExp("^(" + stuff + ")(" + str + ")(" + stuff + ")$");
     }
 
     const input = "^(?:\\s*(" + variable + ")(" + bracket + ")?\\s*[=:→])?(.+)$";
@@ -26,7 +27,7 @@ const regEx = (function(){
 
         add: operator("[+-]"),
         mult: operator("(?!^)[*/]"),
-
+        combinedMult: value(legal + legal + "+"),
 
         input: new RegExp(input),
         whitespace: /^\s*$/
@@ -100,6 +101,10 @@ Engine.prototype = {
                 return this.parseOperator(operator, result[1], result[2], result[3]);
         }
 
+        result = str.match(regEx.combinedMult);
+        if(result)
+            return this.parseCombinedMult(result[1], result[2]);
+
         throw "Token `" + str + "` could not be parsed.";
     },
 
@@ -145,6 +150,13 @@ Engine.prototype = {
             this.parseOperatorChain(obj, operator, result[2], result[3]);
         } else
             append(this.parse(right));
+    },
+
+    parseCombinedMult: function(left, right){
+        return {
+            type: operators.mult.enum,
+            mult: [this.parse(left), this.parse(right)]
+        };
     },
 
     get func(){
@@ -214,8 +226,6 @@ Engine.prototype = {
 
             throw "Variable or constant `%s` not found".format(obj);
         }
-
-        let result = 0;
 
         if(term.type === operators.add.enum)
             return this.calculateAddOperation(term);
